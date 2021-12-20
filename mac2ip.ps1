@@ -37,10 +37,5 @@ function Udp-Broadcast
 $net = "192.168.1"
 $mac = "AA-BB-CC-DD-EE-FF"
 
-#param (
-#  [string] $net,
-#  [string] $mac
-#)
-
 Udp-Broadcast $net
-Get-NetNeighbor -AddressFamily IPv4 -IPAddress "$net.*" -LinkLayerAddress $mac
+(Get-NetNeighbor -AddressFamily IPv4 -IPAddress "$net.*" -LinkLayerAddress $mac).IPAddress
