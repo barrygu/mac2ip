@@ -75,7 +75,7 @@ if (-Not $IP) {
 if (-Not $Mac) {
   $macs = @{}
   $conf="NetCards.json"
-  (Get-Content $conf | ConvertFrom-Json).psobject.properties | foreach-object {$macs.Add($_.Name,$_.Value)}
+  foreach ($o in (Get-Content $conf | ConvertFrom-Json).psobject.properties) {$macs.Add($o.Name,$o.Value)}
   $sel = Show-Menu "Please select a MAC address" $macs
   
   if ($sel -ne "quit") { $Mac = $macs[$sel] } else { Exit }
@@ -83,8 +83,9 @@ if (-Not $Mac) {
 
 $net = $myip.split('.')[0..2] -join '.'
 Udp-Broadcast $net
+Start-Sleep -s 1
 $net = Get-NetNeighbor -AddressFamily IPv4 -IPAddress "$net.*" -LinkLayerAddress $Mac
 if (-Not $net) { Exit }
 
-$net | foreach-object { Write-Host $_.LinkLayerAddress ":" $_.IPAddress }
+foreach ($o in $net) { Write-Host $o.LinkLayerAddress ":" $o.IPAddress }
 Write-Host
