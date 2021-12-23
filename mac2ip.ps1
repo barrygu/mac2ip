@@ -37,17 +37,17 @@ function Udp-Broadcast
 
   try {
     ## Create UDP client instance
-    $UdpClient = New-Object Net.Sockets.UdpClient
+    $UdpClient = new-object Net.Sockets.UdpClient
 
     $Packet = [System.Text.Encoding]::ASCII.GetBytes($Message)
  	for ($Num = 2; $Num -lt 255; $Num++) {
       $IP = "$Net.$Num"
-      $UdpClient.Send($Packet, $Packet.Length, $IP, $Port) | Out-Null
+      $UdpClient.Send($Packet, $Packet.Length, $IP, $Port) | out-null
  	}
     $UdpClient.Close()
   } catch {
     $UdpClient.Dispose()
-    $Error | Write-Error;
+    $Error | Write-Error
   }
 }
 
@@ -58,33 +58,23 @@ Get-NetIPInterface -AddressFamily IPv4 -ConnectionState Connected -Dhcp Enabled 
 
 $ifs = @{}
 $nics = Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4
+if ($nics -eq $null) {
+  Exit
+}
+
 if ([string]::IsNullOrWhiteSpace($IP)) {
-  $nics | foreach-object { $ifs.Add($_.InterfaceAlias, $_.IPAddress) }
-  
-  #$myip = "xxx.xxx.xxx.xxxx"
-  if ($nics.count -gt 1) {
+  if ($nics.GetType().IsArray) {
+    $nics | foreach-object { $ifs.Add($_.InterfaceAlias, $_.IPAddress) }
     $s = Show-Menu "Select Net interface" $ifs
     if ($s -ne "quit") {
       $myip = $ifs[$s]
-      $s = Read-Host "Selected IP of Net interface is "$myip", using it? [y/n]"
-      if ($s -eq "n") {
-        Write-Host "End"
-        Exit
-      }
     } else {
-      Write-Host "End"
       Exit
     }
   } else {
-    if ([string]::IsNullOrWhiteSpace($nics.IPAddress)) {
-      Write-Host "Not find valid NetIP Interface"
-      Write-Host "End"
-      Exit
-    }
     $myip =$nics.IPAddress
     $s = Read-Host "Only one IP Address" $myip "detected, using it? [y/n]"
     if (-Not ($s -eq "y")) {
-      Write-Host "End"
       Exit
     }
   }
@@ -92,7 +82,6 @@ if ([string]::IsNullOrWhiteSpace($IP)) {
   if ($IP -as [IPAddress] -as [Bool]) {
     $myip = $IP
   } else {
-    Write-Host "Not valid parameter of NetIP"
     Exit
   }
 }
@@ -105,23 +94,16 @@ if ([string]::IsNullOrWhiteSpace($Mac)) {
   
   if ($sel -ne "quit") {
     $mac = $macs[$sel]
-    #Write-Host "Selected MAC address:" $mac
-    #Write-Host
   } else {
-    Write-Host "End"
     Exit
   }
 }
 
 $net = $myip.split('.')[0..2] -join '.'
 Udp-Broadcast $net
-$IP = (Get-NetNeighbor -AddressFamily IPv4 -IPAddress "$net.*" -LinkLayerAddress $mac).IPAddress
+$net = Get-NetNeighbor -AddressFamily IPv4 -IPAddress "$net.*" -LinkLayerAddress $mac
 
-Write-Host
-if (-Not [string]::IsNullOrWhiteSpace($IP)) {
-  Write-Host $mac ": " $IP
-} else {
-  Write-Host "Not found IP of MAC " $mac
-}
+if ($net -eq $null) { Exit }
 
+$net | foreach-object { Write-Host $_.LinkLayerAddress ":" $_.IPAddress }
 Write-Host
