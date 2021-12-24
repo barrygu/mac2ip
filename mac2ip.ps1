@@ -91,9 +91,10 @@ if (-Not $IP) {
   }
   $net = $myip.split('.')[0..2] -join '.'
   # Check the specific IP has same net area with any interface
-  if (-Not (Get-NetIPAddress -AddressFamily IPv4 | where-object IPAddress -like "$net.*") -As [Bool]) {
+  Get-NetIPAddress -AddressFamily IPv4 -IPAddress "$net.*" -AddressState "Preferred" 2>&1 >$null
+  if (-Not $?) {
     if ($Verbose) { 
-      Write-Host "No net interface is located in same net area with specific IP address" $IP
+      Write-Host "No net interface is located in same net area of IP address" $IP
     }
     Exit
   }
