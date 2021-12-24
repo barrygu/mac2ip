@@ -1,6 +1,7 @@
 param (
   [string] $IP,
-  [string] $Mac
+  [string] $Mac,
+  [Bool] $Verbose = $false
 )
 
 function Show-Menu
@@ -50,15 +51,26 @@ function Udp-Broadcast
   }
 }
 
-$idx = @()
-Get-NetIPInterface -AddressFamily IPv4 -ConnectionState Connected -Dhcp Enabled | 
-  select-object -Property InterfaceIndex | foreach-object {$idx += $_.InterfaceIndex}
-
-$ifs = @{}
-$nics = Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4
-if (-Not $nics) { Exit }
-
 if (-Not $IP) {
+  $nics = Get-NetIPInterface -AddressFamily IPv4 -ConnectionState Connected -Dhcp Enabled
+  if (-Not $nics) {
+    if (-Not $Verbose) {
+      Write-Host "No any connected net interface is found"
+    }
+    Exit
+  }
+
+  $idx = @()
+  foreach ($o in $nics) { $idx += $o.InterfaceIndex }
+
+  $ifs = @{}
+  $nics = Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4
+  if (-Not $nics) {
+    if ($Verbose) { 
+      Write-Host "No valid IPv4 address is found for any connected net interface"
+    }
+    Exit
+  }
   if ($nics.GetType().IsArray) {
     $nics | foreach-object { $ifs.Add($_.InterfaceAlias, $_.IPAddress) }
     $s = Show-Menu "Select Net interface" $ifs
@@ -69,23 +81,69 @@ if (-Not $IP) {
     if (-Not ($s -eq "y")) { Exit }
   }
 } else {
-  if ($IP -as [IPAddress] -as [Bool]) { $myip = $IP } else { Exit }
+  if ($IP -as [IPAddress] -as [Bool]) {
+    $myip = $IP
+  } else {
+    if ($Verbose) { 
+      Write-Host $IP "is not a valid IP address"
+    }
+    Exit
+  }
+  $net = $myip.split('.')[0..2] -join '.'
+  # Check the specific IP has same net area with any interface
+  if (-Not (Get-NetIPAddress -AddressFamily IPv4 | where-object IPAddress -like "$net.*") -As [Bool]) {
+    if ($Verbose) { 
+      Write-Host "No net interface is located in same net area with specific IP address" $IP
+    }
+    Exit
+  }
 }
 
 if (-Not $Mac) {
-  $macs = @{}
   $conf="NetCards.json"
+  if (-Not (Test-Path -Path $conf -PathType Leaf)) {
+    if ($Verbose) {
+      Write-Host "Please specify a MAC address or provide a config file named" $conf
+    }
+    Exit
+  }
+  $macs = @{}
   foreach ($o in (Get-Content $conf | ConvertFrom-Json).psobject.properties) {$macs.Add($o.Name,$o.Value)}
-  $sel = Show-Menu "Please select a MAC address" $macs
-  
-  if ($sel -ne "quit") { $Mac = $macs[$sel] } else { Exit }
+  if (-Not $macs) {
+    if ($Verbose) {
+      Write-Host "No valid 'Name':'Mac' pair is found in" $conf
+    }
+    Exit
+  }
+  if ($macs.count -eq 1) {
+    if ($Verbose) {
+      Write-Host "Only one MAC address is found in" $conf ", using it"
+    }
+    $Mac = $a.values | % tostring
+  } else {
+    $sel = Show-Menu "Please select a MAC address" $macs
+    if ($sel -ne "quit") { $Mac = $macs[$sel] } else { Exit }
+  }
 }
 
 $net = $myip.split('.')[0..2] -join '.'
 Udp-Broadcast $net
-Start-Sleep -s 1
-$net = Get-NetNeighbor -AddressFamily IPv4 -IPAddress "$net.*" -LinkLayerAddress $Mac
-if (-Not $net) { Exit }
+
+$retry = 10
+do {
+  Start-Sleep -s 1
+  $net = Get-NetNeighbor -AddressFamily IPv4 -IPAddress "$net.*" -LinkLayerAddress $Mac 2> $null
+  if ($net) {break}
+  $retry--
+} while ($retry)
+
+$net = $net | where-object {$_.state -eq "stale" -or $_.state -eq "reachable"} 
+if (-Not $net) {
+  if ($Verbose) {
+    Write-Host "No valid IPv4 Address is found for" $Mac
+  }
+  Exit
+}
 
 foreach ($o in $net) { Write-Host $o.LinkLayerAddress ":" $o.IPAddress }
 Write-Host
