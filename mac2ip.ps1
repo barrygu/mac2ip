@@ -1,14 +1,20 @@
 param (
   [string] $IP,
   [string] $Mac,
-  [Bool] $Verbose = $false
+  [Alias('ca')]
+  [string] $Card,
+  [Alias('r')]
+  [int]    $Retry = 10,
+  [Alias('v')]
+  [switch] $Verbose
 )
 
 function Show-Menu
 {
   param (
     [string] $Title = 'Select index of below items:',
-    [hashtable] $Items
+    #[hashtable] $Items
+    [System.Collections.Specialized.IOrderedDictionary]$Items
   )
   Write-Host "================ $Title ================"
 
@@ -41,8 +47,13 @@ function Udp-Broadcast
     $UdpClient = new-object Net.Sockets.UdpClient
     $Packet = [System.Text.Encoding]::ASCII.GetBytes($Message)
  	for ($Num = 2; $Num -lt 255; $Num++) {
+      #if ($Verbose) { 
+        Write-Progress -Id 1 -Activity "Updating ARP Table" ¡¤
+          -Status "Progress:" -PercentComplete ($Num * 100 / 253)
+      #}
       $IP = "$Net.$Num"
       $UdpClient.Send($Packet, $Packet.Length, $IP, $Port) | Out-Null
+      Start-Sleep -m 50
  	}
     $UdpClient.Close()
   } catch {
@@ -51,100 +62,116 @@ function Udp-Broadcast
   }
 }
 
+if ($Verbose) {
+  $VerbosePreference = "continue"
+}
+
 if (-Not $IP) {
   $nics = Get-NetIPInterface -AddressFamily IPv4 -ConnectionState Connected -Dhcp Enabled
   if (-Not $nics) {
-    if (-Not $Verbose) {
-      Write-Host "No any connected net interface is found"
-    }
+    Write-Verbose "No any connected net interface is found"
     Exit
   }
 
   $idx = @()
-  foreach ($o in $nics) { $idx += $o.InterfaceIndex }
+  foreach ($o in $nics) {
+    $c = Get-NetConnectionProfile -InterfaceIndex $o.InterfaceIndex
+  	if ($c.IPv4Connectivity -eq "Internet") {
+  	  $idx += $o.InterfaceIndex
+  	}
+  }
+  if (-Not $idx) {
+    Write-Verbose "No valid connected net interface is found"
+    Exit
+  }
 
-  $ifs = @{}
   $nics = Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4
   if (-Not $nics) {
-    if ($Verbose) { 
-      Write-Host "No valid IPv4 address is found for any connected net interface"
-    }
+    Write-Verbose "No valid IPv4 address is found for any connected net interface"
     Exit
   }
   if ($nics.GetType().IsArray) {
+    $ifs = @{}
     $nics | foreach-object { $ifs.Add($_.InterfaceAlias, $_.IPAddress) }
     $s = Show-Menu "Select Net interface" $ifs
     if ($s -ne "quit") { $myip = $ifs[$s] } else { Exit }
   } else {
     $myip =$nics.IPAddress
-    $s = Read-Host "Only one IP Address" $myip "detected, using it? [y/n]"
-    if (-Not ($s -eq "y")) { Exit }
+    if ($Verbose) {
+      $s = Read-Host "Single IP Address" $myip "detected, using it? [y/n]"
+      if (-Not ($s -eq "y")) { Exit }
+    }
   }
 } else {
-  if ($IP -as [IPAddress] -as [Bool]) {
+  $c = ($IP.ToCharArray() -eq '.').count
+  if (($c -ge 2) -and ($IP -as [IPAddress] -as [Bool])) {
     $myip = $IP
   } else {
-    if ($Verbose) { 
-      Write-Host $IP "is not a valid IP address"
-    }
+    Write-Verbose "$IP is not a valid IP address"
     Exit
   }
   $net = $myip.split('.')[0..2] -join '.'
   # Check the specific IP has same net area with any interface
   Get-NetIPAddress -AddressFamily IPv4 -IPAddress "$net.*" -AddressState "Preferred" 2>&1 >$null
   if (-Not $?) {
-    if ($Verbose) { 
-      Write-Host "No net interface is located in same net area of IP address" $IP
-    }
+    Write-Verbose "No net interface is located in same net area of IP address $IP"
     Exit
   }
 }
 
+$ConfigFile = "NetCards.json"
 if (-Not $Mac) {
-  $conf="NetCards.json"
+  $WDir = Split-Path $MyInvocation.MyCommand.Path -Parent
+  $conf=Join-Path -Path $WDir -ChildPath $ConfigFile
   if (-Not (Test-Path -Path $conf -PathType Leaf)) {
-    if ($Verbose) {
-      Write-Host "Please specify a MAC address or provide a config file named" $conf
-    }
+    Write-Verbose "Please specify a MAC address or provide a config file named $ConfigFile"
     Exit
   }
-  $macs = @{}
-  foreach ($o in (Get-Content $conf | ConvertFrom-Json).psobject.properties) {$macs.Add($o.Name,$o.Value)}
-  if (-Not $macs) {
-    if ($Verbose) {
-      Write-Host "No valid 'Name':'Mac' pair is found in" $conf
+  $macs = [ordered]@{}
+  foreach ($o in (Get-Content $conf | ConvertFrom-Json).psobject.properties) {
+    if (-not $Card -or ( $Card -eq $o.Name)) {
+      $macs.Add($o.Name,$o.Value)
+      #$macs[$o.Name] = $o.Value
     }
+  }
+  if ($macs.count -eq 0) {
+    Write-Verbose "No valid 'Name':'Mac' pair is found in $ConfigFile"
     Exit
   }
   if ($macs.count -eq 1) {
-    if ($Verbose) {
-      Write-Host "Only one MAC address is found in" $conf ", using it"
-    }
-    $Mac = $a.values | % tostring
+    #$f = [System.IO.Path]::GetFileName($conf)
+    Write-Verbose ("Single MAC address '{0}: {1}' is found in '{2}' , using it" `
+      -f $macs.keys.Normalize(), $macs.values.Normalize(), $ConfigFile)
+    $Mac = $macs.values | % tostring
   } else {
     $sel = Show-Menu "Please select a MAC address" $macs
     if ($sel -ne "quit") { $Mac = $macs[$sel] } else { Exit }
   }
 }
 
+if ( -not $Mac ) {
+  Write-Verbose "No valid MAC address is specified."
+  exit
+}
+
 $net = $myip.split('.')[0..2] -join '.'
 Udp-Broadcast $net
 
-$retry = 10
-do {
+for ($num = $Retry; $num; $num--) {
   Start-Sleep -s 1
-  $net = Get-NetNeighbor -AddressFamily IPv4 -IPAddress "$net.*" -LinkLayerAddress $Mac 2> $null
+  $net = Get-NetNeighbor -AddressFamily IPv4 -IPAddress "$net.*" -LinkLayerAddress $Mac -ea 0
   if ($net) {break}
-  $retry--
-} while ($retry)
+  #if ($Verbose) { 
+    Write-Progress -Id 2 -Activity "Waiting for ARP table is updated" ¡¤
+      -Status "Progress:" -PercentComplete (($Retry - $num) * 100 / $Retry)
+  #}
+}
 
-$net = $net | where-object {$_.state -eq "stale" -or $_.state -eq "reachable"} 
+#$net = $net | where-object {$_.state -eq "stale" -or $_.state -eq "reachable"} 
 if (-Not $net) {
-  if ($Verbose) {
-    Write-Host "No valid IPv4 Address is found for" $Mac
-  }
+  Write-Verbose "Timeout, No valid IPv4 Address is found for $Mac"
   Exit
 }
 
-foreach ($o in $net) { Write-Host $o.LinkLayerAddress ":" $o.IPAddress }
+foreach ($o in $net) { Write-Host ("{0}: {1}: {2}" -f $o.LinkLayerAddress, $o.IPAddress, $o.state) }
 Write-Host
