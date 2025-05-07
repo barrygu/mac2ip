@@ -47,9 +47,10 @@ function Udp-Broadcast
     $UdpClient = new-object Net.Sockets.UdpClient
     $Packet = [System.Text.Encoding]::ASCII.GetBytes($Message)
  	for ($Num = 2; $Num -lt 255; $Num++) {
-      #if ($Verbose) { 
-        Write-Progress -Id 1 -Activity "Updating ARP Table" ¡¤
-          -Status "Progress:" -PercentComplete ($Num * 100 / 253)
+      #if ($Verbose) {
+        $i = "{0:N2}" -f (($Num-2) * 100.0 / 253) 
+        Write-Progress -Id 1 -Activity "Updating ARP Table" `
+          -Status "Progress: $i% completed" -PercentComplete $i
       #}
       $IP = "$Net.$Num"
       $UdpClient.Send($Packet, $Packet.Length, $IP, $Port) | Out-Null
@@ -162,8 +163,9 @@ for ($num = $Retry; $num; $num--) {
   $net = Get-NetNeighbor -AddressFamily IPv4 -IPAddress "$net.*" -LinkLayerAddress $Mac -ea 0
   if ($net) {break}
   #if ($Verbose) { 
-    Write-Progress -Id 2 -Activity "Waiting for ARP table is updated" ¡¤
-      -Status "Progress:" -PercentComplete (($Retry - $num) * 100 / $Retry)
+    $i = "{0:N2}" -f (($Retry - $num) * 100 / $Retry)
+    Write-Progress -Id 2 -Activity "Waiting for ARP table is updated" `
+      -Status "Progress: $i% completed" -PercentComplete $i
   #}
 }
 
